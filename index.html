@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bejeweled Ultimate Clone</title>
+<style>
+  body {
+    font-family: sans-serif;
+    background: #111;
+    color: white;
+    text-align: center;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+  h1 { margin-top: 10px; text-shadow: 0 0 10px #fff; }
+  #scoreboard { margin: 10px auto; font-size: 18px; }
+  #board {
+    display: grid;
+    gap: 4px;
+    margin: 20px auto;
+    touch-action: none;
+    position: relative;
+  }
+  .cell {
+    width: 50px;
+    height: 50px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    user-select: none;
+    background: #222;
+    transition: transform 0.25s ease, box-shadow 0.3s ease, filter 0.3s ease;
+    position: relative;
+  }
+  .cell.selected { border: 2px solid white; transform: scale(1.1); box-shadow: 0 0 15px #fff; filter: brightness(1.2);}
+  .cell.power { animation: sparkle 1.5s infinite; }
+  @keyframes sparkle {
+    0%, 100% { box-shadow: 0 0 5px 2px gold; }
+    50% { box-shadow: 0 0 15px 5px yellow; }
+  }
+  #boosters { margin: 15px; }
+  .btn {
+    margin: 5px;
+    padding: 5px 12px;
+    background: #444;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .btn:active { background: #666; }
+  canvas { position: absolute; pointer-events: none; left:0; top:0; }
+  #comboDisplay {
+    position: absolute;
+    font-size: 28px;
+    font-weight: bold;
+    text-shadow: 0 0 15px #fff;
+    pointer-events: none;
+    color: #ff0;
+  }
+  @media (max-width: 500px) {
+    #board { grid-template-columns: repeat(8, 40px); }
+    .cell { width: 40px; height: 40px; font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Bejeweled Ultimate Clone</h1>
+<div id="scoreboard">
+  Score: <span id="score">0</span> | Level: <span id="level">1</span> | Combo: <span id="combo">1x</span>
+</div>
+
+<div id="board"></div>
+<canvas id="particles"></canvas>
+<div id="comboDisplay"></div>
+
+<div id="boosters">
+  <button class="btn" onclick="shuffleBoard()">Shuffle Board</button>
+  <button class="btn" onclick="clearRandomRow()">Clear Row</button>
+  <button class="btn" onclick="clearRandomCol()">Clear Column</button>
+  <button class="btn" onclick="clear3x3()">Clear 3x3 Area</button>
+</div>
+
+<!-- Sounds -->
+<audio id="swapSound" src="https://freesound.org/data/previews/198/198841_285997-lq.mp3"></audio>
+<audio id="matchSound" src="https://freesound.org/data/previews/33/33425_512123-lq.mp3"></audio>
+<audio id="powerSound" src="https://freesound.org/data/previews/170/170078_2394245-lq.mp3"></audio>
+<audio id="levelUpSound" src="https://freesound.org/data/previews/273/273983_512123-lq.mp3"></audio>
+
+<script>
+const jewels = ["🔴","🔵","🟢","🟡","🟣","🟠"];
+let boardSize = 8, board=[], selected=null, score=0, level=1, combo=1, targetScore=50;
+const powerChance = 0.07;
+const boardEl = document.getElementById("board");
+const scoreEl = document.getElementById("score");
+const levelEl = document.getElementById("level");
+const comboEl = document.getElementById("combo");
+const comboDisplay = document.getElementById("comboDisplay");
+
+const swapSound = document.getElementById("swapSound");
+const matchSound = document.getElementById("matchSound");
+const powerSound = document.getElementById("powerSound");
+const levelUpSound = document.getElementById("levelUpSound");
+
+const canvas=document.getElementById("particles");
+const ctx=canvas.getContext("2d");
+canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+let particlesArr=[], swapTrails=[];
+
+// Particle system
+function spawnParticles(x,y,color,count=20){
+  for(let i=0;i<count;i++){
+    particlesArr.push({x,y,vx:(Math.random()-0.5)*4,vy:(Math.random()-1.5)*4,alpha:1,color});
+  }
+}
+function updateParticles(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  particlesArr.forEach((p,i)=>{
+    p.x+=p.vx; p.y+=p.vy; p.alpha-=0.02;
+    if(p.alpha<=0) particlesArr.splice(i,1);
+    else {ctx.globalAlpha=p.alpha; ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,5,0,2*Math.PI); ctx.fill(); ctx.globalAlpha=1;}
+  });
+  // Draw swap trails
+  swapTrails.forEach((t,i)=>{
+    t.x += (t.tx - t.x)*0.3; t.y += (t.ty - t.y)*0.3; t.alpha-=0.05;
+    if(t.alpha<=0) swapTrails.splice(i,1);
+    else { ctx.globalAlpha=t.alpha; ctx.fillStyle=t.color; ctx.beginPath(); ctx.arc(t.x,t.y,10,0,2*Math.PI); ctx.fill(); ctx.globalAlpha=1;}
+  });
+  requestAnimationFrame(updateParticles);
+}
+updateParticles();
+
+// Board init
+function initBoard(){
+  boardEl.innerHTML=""; board=[]; combo=1; comboEl.textContent=combo+"x";
+  boardEl.style.gridTemplateColumns=`repeat(${boardSize},50px)`;
+  for(let r=0;r<boardSize;r++){
+    let row=[]; for(let c=0;c<boardSize;c++) row.push(randomGem()); board.push(row);
+  }
+  renderBoard();
+}
+function randomGem(){return Math.random()<powerChance?"💣":jewels[Math.floor(Math.random()*jewels.length)];}
+function renderBoard(){
+  boardEl.innerHTML="";
+  for(let r=0;r<boardSize;r++){
+    for(let c=0;c<boardSize;c++){
+      const cell=document.createElement("div");
+      cell.className="cell"; cell.textContent=board[r][c];
+      if(board[r][c]==="💣") cell.classList.add("power");
+      cell.dataset.r=r; cell.dataset.c=c;
+      cell.onclick=()=>selectCell(cell);
+      cell.addEventListener('touchstart',e=>{e.preventDefault(); selectCell(cell);});
+      boardEl.appendChild(cell);
+    }
+  }
+}
+
+function selectCell(cell){
+  if(!selected){selected=cell; cell.classList.add("selected"); return;}
+  if(selected===cell){selected.classList.remove("selected"); selected=null; return;}
+  swapCellsAnimated(selected,cell);
+  selected.classList.remove("selected"); selected=null;
+}
+
+function swapCellsAnimated(a,b){
+  const ra=+a.dataset.r,ca=+a.dataset.c,rb=+b.dataset.r,cb=+b.dataset.c;
+  [board[ra][ca], board[rb][cb]]=[board[rb][cb], board[ra][ca]];
+  swapSound.volume=0.3+0.7*Math.min(combo/5,1); swapSound.play();
+  const aPos=a.getBoundingClientRect(), bPos=b.getBoundingClientRect();
+  const deltaX=bPos.left-aPos.left, deltaY=bPos.top-aPos.top;
+  swapTrails.push({x:aPos.left+aPos.width/2,y:aPos.top+aPos.height/2,tx:bPos.left+bPos.width/2,ty:bPos.top+bPos.height/2,alpha:1,color:'#fff'});
+  swapTrails.push({x:bPos.left+bPos.width/2,y:bPos.top+bPos.height/2,tx:aPos.left+aPos.width/2,ty:aPos.top+aPos.height/2,alpha:1,color:'#fff'});
+  a.style.transform=`translate(${deltaX}px,${deltaY}px)`; b.style.transform=`translate(${-deltaX}px,${-deltaY}px)`;
+  setTimeout(()=>{renderBoard(); checkMatches();},250);
+}
+
+function checkMatches(){
+  let toClear=[];
+  for(let r=0;r<boardSize;r++){ let streak=1; for(let c=1;c<boardSize;c++){ if(board[r][c]===board[r][c-1]) streak++; else streak=1; if(streak>=3) for(let k=0;k<streak;k++) toClear.push([r,c-k]);}}
+  for(let c=0;c<boardSize;c++){ let streak=1; for(let r=1;r<boardSize;r++){ if(board[r][c]===board[r-1][c]) streak++; else streak=1; if(streak>=3) for(let k=0;k<streak;k++) toClear.push([r-k,c]);}}
+  if(toClear.length) animateClear(toClear); else { combo=1; comboEl.textContent=combo+"x"; }
+}
+
+function animateClear(cells){
+  const unique=Array.from(new Set(cells.map(JSON.stringify)),JSON.parse);
+  if(combo>=3){ boardEl.style.boxShadow='0 0 '+(combo*15)+'px #ff0'; setTimeout(()=>{boardEl.style.boxShadow='none';},300);}
+  unique.forEach(([r,c])=>{
+    const cellEl=boardEl.querySelector(`.cell[data-r='${r}'][data-c='${c}']`);
+    const rect=cellEl.getBoundingClientRect();
+    const color="#"+Math.floor(Math.random()*16777215).toString(16);
+    spawnParticles(rect.left+rect.width/2,rect.top+rect.height/2,color,20+combo*2);
+    if(board[r][c]==="💣"){ for(let i=r-1;i<=r+1;i++) for(let j=c-1;j<=c+1;j++) if(i>=0 && j>=0 && i<boardSize && j<boardSize) board[i][j]=""; powerSound.volume=0.5+0.5*Math.min(combo/5,1); powerSound.play();}
+    else board[r][c]="";
+    if(combo>1) showCombo(rect.left+20,rect.top-30,combo);
+  });
+  matchSound.volume=0.3+0.7*Math.min(combo/5,1); matchSound.play();
+  score+=unique.length*10*combo;
+  combo++; scoreEl.textContent=score; comboEl.textContent=combo+"x";
+  checkLevelUp();
+  setTimeout(dropGems,300);
+}
+
+function dropGems(){
+  for(let c=0;c<boardSize;c++){
+    let column=[];
+    for(let r=0;r<boardSize;r++) if(board[r][c]!=="") column.push(board[r][c]);
+    while(column.length<boardSize) column.unshift(randomGem());
+    for(let r=0;r<boardSize;r++) board[r][c]=column[r];
+  }
+  renderBoard(); setTimeout(checkMatches,200);
+}
+
+function checkLevelUp(){
+  if(score>=targetScore){
+    level++; levelEl.textContent=level; targetScore+=level*50;
+    boardSize=Math.min(12,boardSize+1); initBoard(); levelUpSound.play();
+    alert("Level Up! Board size increased!");
+  }
+}
+
+function showCombo(x,y,value){
+  comboDisplay.style.left=x+"px"; comboDisplay.style.top=y+"px"; comboDisplay.textContent=value+"x!";
+  comboDisplay.style.opacity=1; comboDisplay.style.transform="scale("+(1+value*0.2)+")"; comboDisplay.style.color=['#ff0','#0ff','#f0f','#f80','#0f0'][value%5];
+  setTimeout(()=>{comboDisplay.style.transition="all 0.5s ease"; comboDisplay.style.opacity=0; comboDisplay.style.transform="scale(1)";},150);
+}
+
+// Boosters
+function shuffleBoard(){let allGems=board.flat().filter(g=>g!==""); allGems.sort(()=>Math.random()-0.5); for(let r=0;r<boardSize;r++) for(let c=0;c<boardSize;c++) board[r][c]=allGems[r*boardSize+c]; renderBoard(); checkMatches();}
+function clearRandomRow(){const r=Math.floor(Math.random()*boardSize); for(let c=0;c<boardSize;c++) board[r][c]=""; dropGems();}
+function clearRandomCol(){const c=Math.floor(Math.random()*boardSize); for(let r=0;r<boardSize;r++) board[r][c]=""; dropGems();}
+function clear3x3(){const r0=Math.floor(Math.random()*(boardSize-2)); const c0=Math.floor(Math.random()*(boardSize-2)); for(let r=r0;r<r0+3;r++) for(let c=c0;c<c0+3;c++) board[r][c]=""; dropGems();}
+
+// Init
+initBoard();
+</script>
+</body>
+</html>
